@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.env.*
+
+# Frontend dependencies and build output
+frontend/node_modules/
+frontend/dist/
+backend/storage/
+
+# Local tooling
+.DS_Store
+.vscode/*.log

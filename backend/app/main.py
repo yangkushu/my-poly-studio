@@ -1,0 +1,69 @@
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
+from app.routers import chat, settings
+import os
+from dotenv import load_dotenv
+from app.utils.logger import setup_logging
+from app.services.connection_manager import manager
+# from app.services import workspace_service
+app = FastAPI(title="PolyStudio API", version="1.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 确保存储目录存在
+BASE_DIR = Path(__file__).parent.parent
+STORAGE_DIR = BASE_DIR / "storage"
+IMAGES_DIR = STORAGE_DIR / "images"
+MODELS_DIR = STORAGE_DIR / "models"
+VIDEOS_DIR = STORAGE_DIR / "videos"
+AUDIOS_DIR = STORAGE_DIR / "audios"
+IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+MODELS_DIR.mkdir(parents=True, exist_ok=True)
+VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
+AUDIOS_DIR.mkdir(parents=True, exist_ok=True)
+
+# 确保工作空间默认文件存在
+# workspace_service.ensure_workspace_defaults()
+
+# 配置静态文件服务 - 用于访问保存的图片
+# 这样前端可以通过 /storage/images/文件名 访问图片
+if STORAGE_DIR.exists():
+    app.mount("/storage", StaticFiles(directory=str(STORAGE_DIR)), name="storage")
+
+# 注册路由
+app.include_router(chat.router, prefix="/api", tags=["chat"])
+app.include_router(settings.router, prefix="/api", tags=["settings"])
+
+
+@app.get("/")
+async def root():
+    return {"message": "Welcome to PolyStudio API!"}
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    import os
+    import sys
+
+    # 确保使用当前 Python 解释器
+    uvicorn.run(
+        "app.main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        reload_includes=["*.py"],
+        log_level="info",
+    )
