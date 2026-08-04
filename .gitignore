@@ -13,4 +13,5 @@ backend/storage/
 
 # Local tooling
 .DS_Store
+.vscode/
 .vscode/*.log
