@@ -5,6 +5,8 @@
 """
 import json
 import logging
+import base64
+import mimetypes
 import os
 import time
 import uuid
@@ -62,7 +64,7 @@ def _local_path_from_storage_url(file_url: str) -> Optional[Path]:
 
 
 def resolve_input_url(file_url: str, client: Any) -> str:
-    """公网 URL/Data URI 直传；本地存储文件上传至 fal CDN 后使用其 URL。"""
+    """公网 URL/Data URI 直传；本地存储文件按 data URI 传给 fal。"""
     if file_url.startswith("data:"):
         return file_url
     local_path = _local_path_from_storage_url(file_url)
@@ -70,7 +72,15 @@ def resolve_input_url(file_url: str, client: Any) -> str:
         return file_url
     if not local_path.exists():
         raise FileNotFoundError(f"本地文件不存在: {local_path}")
-    return client.upload_file(local_path)
+
+    # 与火山视频工具保持一致：本地文件直接转成 data URI，不经过 fal storage
+    # upload。这样既不会受中文文件名的 ASCII 编码影响，也不会触发账号不支持
+    # 的 storage_type=gcs。fal 的文件输入支持 Base64 data URI。
+    content_type = mimetypes.guess_type(str(local_path))[0] or "image/jpeg"
+    with local_path.open("rb") as source:
+        encoded = base64.b64encode(source.read()).decode("ascii")
+    logger.info("📁 本地图片已转为 data URI: %s, content_type=%s", local_path, content_type)
+    return f"data:{content_type};base64,{encoded}"
 
 
 def download_video(video_url: str, provider: str, prompt: str) -> str:
