@@ -106,6 +106,8 @@ def generate_zhipu_vidu2_video_tool(
 ) -> str:
     """使用智谱的 Vidu 2 生成视频，并将三个 Vidu 2 模型合并为一个 Tool。
 
+    官方文档：https://docs.bigmodel.cn/cn/guide/models/video-generation/vidu2
+    异步结果文档：https://docs.bigmodel.cn/api-reference/%E6%A8%A1%E5%9E%8B-api/%E6%9F%A5%E8%AF%A2%E5%BC%82%E6%AD%A5%E7%BB%93%E6%9E%9C
     image 对应 vidu2-image（1 张首帧）；start_end 对应 vidu2-start-end（2 张首尾帧）；
     reference 对应 vidu2-reference（1–3 张参考图）。三种模式均固定生成 4 秒、720P 视频。
     价格（2026-08-05）：1.25 元/次 ÷ 4 秒 = 0.3125 元/秒。

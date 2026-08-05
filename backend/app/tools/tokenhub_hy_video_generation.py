@@ -93,6 +93,8 @@ def generate_tokenhub_hy_video_tool(
 ) -> str:
     """使用腾讯云 TokenHub 的 HY-Video-1.5 生成视频。
 
+    官方文档：https://cloud.tencent.com/document/product/1823/130081
+    价格文档：https://cloud.tencent.com/document/product/1823/130055
     仅支持文生视频和单图图生视频；HY-Video-1.5 当前 TokenHub 接口不支持首尾帧或多参考图。
     价格（2026-08-05）：1.5 积分/次 × 1 元/积分 = 1.50 元/次。官方未承诺固定输出时长，
     因此元/秒应按 1.50 ÷ 实际输出秒数计算；若输出 5 秒约 0.30 元/秒，输出 10 秒约 0.15 元/秒。

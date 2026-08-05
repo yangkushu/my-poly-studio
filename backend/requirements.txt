@@ -13,6 +13,7 @@ httpx==0.25.2
 anyio<4.0.0,>=3.7.1
 Pillow==10.4.0
 requests>=2.31.0
+fal-client
 moviepy>=1.0.3
 opencv-python>=4.8.0
 pydub>=0.25.1
