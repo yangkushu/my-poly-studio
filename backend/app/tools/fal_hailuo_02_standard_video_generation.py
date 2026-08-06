@@ -40,19 +40,30 @@ def generate_fal_hailuo_02_standard_video_tool(
     resolution: Literal["512P", "768P"] = "768P",
     prompt_optimizer: bool = True,
 ) -> str:
-    """通过 fal.ai 调用 MiniMax Hailuo 02 Standard（768P/512P）生成视频。
-
-    官方文档：
-    - 文生：https://fal.ai/models/fal-ai/minimax/hailuo-02/standard/text-to-video/api
-    - 图生/首尾帧：https://fal.ai/models/fal-ai/minimax/hailuo-02/standard/image-to-video/api
-    - fal Python SDK：https://fal.ai/docs/api-reference/client-libraries/python/fal_client
-    支持文生，或单图图生（可选尾帧）；时长为 6 或 10 秒，分辨率为 512P 或 768P。
-    价格（2026-08-05，fal 官方美元报价）：512P 为 $0.017/秒，768P 为 $0.045/秒。
-    按 1 USD ≈ 6.77 元估算：512P ≈ 0.12 元/秒，768P ≈ 0.30 元/秒；
-    汇率会波动，实际换算值由 FAL_USD_CNY_RATE 配置决定，最终以 fal 账单为准。
-
-    返回下载到本地 /storage/videos/ 的 video_url JSON。
+    
     """
+    通过 fal.ai 调用 MiniMax Hailuo 02 Standard 模型生成视频。
+    - 支持文生、单图图生（传入 image_url)、首尾帧（传入 首帧:image_url,尾帧:end_image_url)
+    - 测试阶段使用最低画质，最短时间，方便测试效果 
+    Args:
+        prompt: 视频生成的提示词（支持中英文）
+        mode: 生成模式，"text"（文生视频）、"image"（图生视频）
+        image_url: 图片URL或本地路径(图生视频-首帧模式，如 /storage/images/xxx.jpg,本地路径会自动转换为base64)
+        end_image_url: 尾帧图片URL或本地路径(首尾帧模式,如 /storage/images/xxx.jpg,本地路径会自动转换为base64)
+        duration: 视频时长（秒）,可选,6秒,默认6秒
+        resolution: 分辨率，支持 "512P"，默认 "512P"
+    
+    Returns:
+        返回下载到本地 /storage/videos/ 的 video_url JSON。
+    """
+
+    # 官方文档：
+    # - 文生：https://fal.ai/models/fal-ai/minimax/hailuo-02/standard/text-to-video/api
+    # - 图生/首尾帧：https://fal.ai/models/fal-ai/minimax/hailuo-02/standard/image-to-video/api
+    # - fal Python SDK：https://fal.ai/docs/api-reference/client-libraries/python/fal_client
+    # 价格（2026-08-05，fal 官方美元报价）：512P 为 $0.017/秒，768P 为 $0.045/秒。
+    # 按 1 USD ≈ 6.77 元估算：512P ≈ 0.12 元/秒，768P ≈ 0.30 元/秒；
+    # 汇率会波动，实际换算值由 FAL_USD_CNY_RATE 配置决定，最终以 fal 账单为准。
     if mode == "image" and not image_url:
         return json.dumps({"error": "image 模式必须提供 image_url"}, ensure_ascii=False)
     if mode == "text" and (image_url or end_image_url):
