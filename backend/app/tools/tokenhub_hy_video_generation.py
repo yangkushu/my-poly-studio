@@ -76,12 +76,21 @@ def _download_video(video_url: str, prompt: str) -> str:
 
 
 class GenerateTokenHubHyVideoInput(BaseModel):
-    """TokenHub HY-Video-1.5 的输入参数。"""
+    """腾讯云 TokenHub HY-Video-1.5 视频生成工具的输入参数。"""
 
-    prompt: str = Field(description="视频内容描述，最多 200 个 UTF-8 字符。")
-    mode: Literal["text", "image"] = Field(default="text", description="text 为文生视频；image 为单图图生视频。")
-    image_url: Optional[str] = Field(default=None, description="image 模式必填；支持公网 URL 或本地 /storage/images/... 路径。")
-    logo_add: int = Field(default=1, description="是否添加 AI 标识：1 添加（默认），0 关闭（需平台已获授权）。")
+    prompt: str = Field(description="必填。视频内容的中文正向提示词，最多 200 个 UTF-8 字符。")
+    mode: Literal["text", "image"] = Field(
+        default="text",
+        description="生成模式：text=仅凭提示词生成，不能传 image_url；image=使用一张图片和提示词生成视频。该工具不支持首尾帧或多参考图。",
+    )
+    image_url: Optional[str] = Field(
+        default=None,
+        description="输入图片，仅 image 模式必填；可为公网 URL 或本项目的 /storage/... 图片路径。上游要求 JPG、JPEG、PNG、WEBP、BMP 或 TIFF，文件不超过 10 MB，单边 50–5000 像素，宽高比 1:4–4:1。",
+    )
+    logo_add: Literal[0, 1] = Field(
+        default=1,
+        description="AI 标识开关：1=添加（默认）；0=请求关闭，但仅在 TokenHub 控制台已获“显示标识自主完成”授权时生效。",
+    )
 
 
 @tool("generate_tokenhub_hy_video", args_schema=GenerateTokenHubHyVideoInput)
@@ -89,22 +98,25 @@ def generate_tokenhub_hy_video_tool(
     prompt: str,
     mode: Literal["text", "image"] = "text",
     image_url: Optional[str] = None,
-    logo_add: int = 1,
+    logo_add: Literal[0, 1] = 1,
 ) -> str:
-    """使用腾讯云 TokenHub 的 HY-Video-1.5 生成视频。
+    """
+    使用腾讯云 TokenHub 的 HY-Video-1.5 生成视频。
 
-    官方文档：https://cloud.tencent.com/document/product/1823/130081
-    价格文档：https://cloud.tencent.com/document/product/1823/130055
-    仅支持文生视频和单图图生视频；HY-Video-1.5 当前 TokenHub 接口不支持首尾帧或多参考图。
-    价格（2026-08-05）：1.5 积分/次 × 1 元/积分 = 1.50 元/次。官方未承诺固定输出时长，
-    因此元/秒应按 1.50 ÷ 实际输出秒数计算；若输出 5 秒约 0.30 元/秒，输出 10 秒约 0.15 元/秒。
+    - text：纯文生视频；只提供 prompt。
+    - image：单图图生视频；必须提供 image_url 和 prompt。
 
-    返回下载到本地 /storage/videos/ 的 video_url JSON。
+    上游仅提供 720p 输出，本工具不提供时长、首尾帧或多参考图控制。完成后返回包含本地 video_url 的 JSON 结果。
     """
     if not TOKENHUB_API_KEY:
+        logger.error("TokenHub 视频生成未开始: 未配置 TOKENHUB_API_KEY")
         return json.dumps({"error": "未配置 TOKENHUB_API_KEY（请在 backend/.env 设置，可参考 env.example）"}, ensure_ascii=False)
     if mode == "image" and not image_url:
+        logger.warning("TokenHub 视频请求被拒绝: image 模式缺少图片")
         return json.dumps({"error": "image 模式必须提供 image_url"}, ensure_ascii=False)
+    if mode == "text" and image_url:
+        logger.warning("TokenHub 视频请求被拒绝: text 模式包含图片参数")
+        return json.dumps({"error": "text 模式不接受 image_url"}, ensure_ascii=False)
 
     payload = {"model": TOKENHUB_VIDEO_MODEL, "prompt": prompt, "logo_add": logo_add}
     if image_url:
@@ -112,6 +124,7 @@ def generate_tokenhub_hy_video_tool(
     headers = {"Authorization": f"Bearer {TOKENHUB_API_KEY}", "Content-Type": "application/json"}
 
     try:
+        logger.info("提交 TokenHub 视频任务: model=%s mode=%s logo_add=%s has_image=%s", TOKENHUB_VIDEO_MODEL, mode, logo_add, bool(image_url))
         submit = requests.post(f"{TOKENHUB_BASE_URL}/v1/api/video/submit", json=payload, headers=headers, timeout=60)
         if not submit.ok:
             raise RuntimeError(f"提交任务失败: status={submit.status_code}, body={submit.text}")
@@ -119,8 +132,10 @@ def generate_tokenhub_hy_video_tool(
         task_id = task.get("id")
         if not task_id:
             raise RuntimeError(f"提交响应未包含 id: {json.dumps(task, ensure_ascii=False)}")
+        logger.info("TokenHub 视频任务已提交: task_id=%s", task_id)
 
         deadline = time.monotonic() + POLL_TIMEOUT_SECONDS
+        last_status: Optional[str] = None
         while time.monotonic() < deadline:
             query = requests.post(
                 f"{TOKENHUB_BASE_URL}/v1/api/video/query",
@@ -132,11 +147,15 @@ def generate_tokenhub_hy_video_tool(
                 raise RuntimeError(f"查询任务失败: status={query.status_code}, body={query.text}")
             result = query.json()
             status = str(result.get("status", "")).lower()
+            if status != last_status:
+                logger.info("TokenHub 视频任务状态变化: task_id=%s status=%s", task_id, status or "unknown")
+                last_status = status
             if status in {"failed", "fail", "error", "cancelled", "canceled"}:
                 raise RuntimeError(result.get("error") or result.get("message") or f"任务失败: {json.dumps(result, ensure_ascii=False)}")
             video_url = result.get("data", {}).get("url") if isinstance(result.get("data"), dict) else None
             if status in {"completed", "succeeded", "success", "done"} and video_url:
                 local_path = _download_video(video_url, prompt)
+                logger.info("TokenHub 视频任务完成并保存: task_id=%s local_path=%s", task_id, local_path)
                 return json.dumps({
                     "video_url": local_path,
                     "original_url": video_url,
@@ -151,9 +170,10 @@ def generate_tokenhub_hy_video_tool(
                     "message": "视频已生成并保存到本地",
                 }, ensure_ascii=False)
             time.sleep(POLL_INTERVAL_SECONDS)
+        logger.warning("TokenHub 视频任务超时: task_id=%s timeout_seconds=%s", task_id, POLL_TIMEOUT_SECONDS)
         raise TimeoutError(f"任务超时: {POLL_TIMEOUT_SECONDS} 秒内未完成（task_id={task_id}）")
     except Exception as error:
-        logger.exception("TokenHub HY-Video-1.5 生成失败")
+        logger.exception("TokenHub 视频生成失败: mode=%s", mode)
         return json.dumps({"error": f"生成视频时出错: {error}"}, ensure_ascii=False)
 
 

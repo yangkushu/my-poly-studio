@@ -106,11 +106,19 @@ def generate_fal_video(endpoint: str, payload: dict[str, Any], prompt: str, prov
     """提交 fal 队列任务、轮询结果并下载视频。"""
     fal_client = _import_fal_client()
     client = create_fal_client()
+    logger.info("提交 fal 视频任务: provider=%s endpoint=%s", provider, endpoint)
     handle = client.submit(endpoint, payload)
+    request_id = getattr(handle, "request_id", "unknown")
+    logger.info("fal 视频任务已提交: provider=%s request_id=%s", provider, request_id)
     deadline = time.monotonic() + POLL_TIMEOUT_SECONDS
+    last_status_name: Optional[str] = None
 
     while time.monotonic() < deadline:
         status = handle.status()
+        status_name = type(status).__name__
+        if status_name != last_status_name:
+            logger.info("fal 视频任务状态变化: provider=%s request_id=%s status=%s", provider, request_id, status_name)
+            last_status_name = status_name
         if isinstance(status, fal_client.Completed):
             result = handle.get()
             video = result.get("video") if isinstance(result, dict) else None
@@ -118,8 +126,9 @@ def generate_fal_video(endpoint: str, payload: dict[str, Any], prompt: str, prov
             if not video_url:
                 raise RuntimeError(f"fal 任务完成但响应未包含 video.url: {json.dumps(result, ensure_ascii=False)}")
             local_path = download_video(video_url, provider, prompt)
+            logger.info("fal 视频任务完成并保存: provider=%s request_id=%s local_path=%s", provider, request_id, local_path)
             return {
-                "task_id": handle.request_id,
+                "task_id": request_id,
                 "original_url": video_url,
                 "video_url": local_path,
                 "local_path": local_path,
@@ -130,5 +139,6 @@ def generate_fal_video(endpoint: str, payload: dict[str, Any], prompt: str, prov
     try:
         handle.cancel()
     except Exception:  # 超时后的取消失败不掩盖原始超时错误
-        logger.warning("取消超时的 fal 任务失败: %s", handle.request_id, exc_info=True)
-    raise TimeoutError(f"fal 任务超时: {POLL_TIMEOUT_SECONDS} 秒内未完成（task_id={handle.request_id}）")
+        logger.warning("取消超时的 fal 任务失败: %s", request_id, exc_info=True)
+    logger.warning("fal 视频任务超时: provider=%s request_id=%s timeout_seconds=%s", provider, request_id, POLL_TIMEOUT_SECONDS)
+    raise TimeoutError(f"fal 任务超时: {POLL_TIMEOUT_SECONDS} 秒内未完成（task_id={request_id}）")

@@ -83,15 +83,28 @@ def _download_video(video_url: str, prompt: str) -> str:
 
 
 class GenerateZhipuVidu2VideoInput(BaseModel):
-    """智谱 Vidu 2 统一 Tool 的输入参数。"""
+    """智谱 Vidu 2 视频生成工具的输入参数。"""
 
-    prompt: str = Field(description="视频内容描述，最多 512 个字符。")
-    mode: Literal["image", "start_end", "reference"] = Field(description="图生、首尾帧或多参考图模式。")
-    image_urls: list[str] = Field(description="image 恰好 1 张；start_end 恰好 2 张；reference 为 1 至 3 张。")
-    movement_amplitude: Literal["auto", "small", "medium", "large"] = Field(default="auto", description="视频运动幅度。")
-    with_audio: bool = Field(default=False, description="是否添加背景音乐；Vidu 2 固定生成 4 秒视频。")
-    aspect_ratio: Literal["16:9", "9:16", "1:1"] = Field(default="16:9", description="仅 reference 模式有效。")
-    size: Optional[Literal["1280x720", "480x360"]] = Field(default=None, description="仅 start_end 可选 1280x720 或 480x360；其他模式固定 1280x720。")
+    prompt: str = Field(description="必填。视频内容描述，最多 512 个字符；应说明画面中的动作、镜头或场景变化。")
+    mode: Literal["image", "start_end", "reference"] = Field(
+        description="生成模式：image=单张首帧图生；start_end=两张首尾帧过渡；reference=使用 1–3 张参考图生成视频。"
+    )
+    image_urls: list[str] = Field(
+        description="图片列表。image 模式必须仅传 1 张首帧；start_end 模式必须传 2 张，顺序为首帧、尾帧；reference 模式必须传 1–3 张参考图。每项可为公网 URL、data URI 或本项目的 /storage/... 图片路径。"
+    )
+    movement_amplitude: Literal["auto", "small", "medium", "large"] = Field(
+        default="auto", description="画面中主体的运动幅度：auto=模型自动判断；small、medium、large=由小到大的运动强度。"
+    )
+    with_audio: bool = Field(
+        default=False, description="是否生成音频。仅 image 和 reference 模式会发送此参数；start_end 模式不支持，本工具会忽略它。"
+    )
+    aspect_ratio: Literal["16:9", "9:16", "1:1"] = Field(
+        default="16:9", description="仅 reference 模式的输出画幅比：16:9、9:16 或 1:1，默认 16:9；其他模式会忽略。"
+    )
+    size: Optional[Literal["1280x720", "720x480"]] = Field(
+        default=None,
+        description="可选输出尺寸。省略时 image 使用 1280x720，start_end 与 reference 使用 720x480。指定时只能使用该模式的默认尺寸。",
+    )
 
 
 @tool("generate_zhipu_vidu2_video", args_schema=GenerateZhipuVidu2VideoInput)
@@ -102,29 +115,38 @@ def generate_zhipu_vidu2_video_tool(
     movement_amplitude: Literal["auto", "small", "medium", "large"] = "auto",
     with_audio: bool = False,
     aspect_ratio: Literal["16:9", "9:16", "1:1"] = "16:9",
-    size: Optional[Literal["1280x720", "480x360"]] = None,
+    size: Optional[Literal["1280x720", "720x480"]] = None,
 ) -> str:
-    """使用智谱的 Vidu 2 生成视频，并将三个 Vidu 2 模型合并为一个 Tool。
+    """
+    使用智谱 Vidu 2 生成视频。
 
-    官方文档：https://docs.bigmodel.cn/cn/guide/models/video-generation/vidu2
-    异步结果文档：https://docs.bigmodel.cn/api-reference/%E6%A8%A1%E5%9E%8B-api/%E6%9F%A5%E8%AF%A2%E5%BC%82%E6%AD%A5%E7%BB%93%E6%9E%9C
-    image 对应 vidu2-image（1 张首帧）；start_end 对应 vidu2-start-end（2 张首尾帧）；
-    reference 对应 vidu2-reference（1–3 张参考图）。三种模式均固定生成 4 秒、720P 视频。
-    价格（2026-08-05）：1.25 元/次 ÷ 4 秒 = 0.3125 元/秒。
+    - image：以一张首帧和 prompt 生成视频。
+    - start_end：按 image_urls 的顺序使用首帧和尾帧，生成两帧之间的过渡视频。
+    - reference：以 1–3 张参考图和 prompt 生成视频，适合保持人物、物品或整体风格的一致性。
 
-    返回下载到本地 /storage/videos/ 的 video_url JSON。
+    三种模式均固定生成 4 秒视频。工具完成后返回包含本地 video_url 的 JSON 结果。
     """
     if not ZHIPU_API_KEY:
+        logger.error("智谱 Vidu 2 视频生成未开始: 未配置 ZHIPU_API_KEY")
         return json.dumps({"error": "未配置 ZHIPU_API_KEY（请在 backend/.env 设置，可参考 env.example）"}, ensure_ascii=False)
 
     expected_counts = {"image": {1}, "start_end": {2}, "reference": {1, 2, 3}}
     if len(image_urls) not in expected_counts[mode]:
         expected = {"image": "恰好 1 张", "start_end": "恰好 2 张", "reference": "1 至 3 张"}[mode]
+        logger.warning("智谱 Vidu 2 视频请求被拒绝: mode=%s image_count=%s", mode, len(image_urls))
         return json.dumps({"error": f"{mode} 模式需要 {expected}图片，当前收到 {len(image_urls)} 张"}, ensure_ascii=False)
-    if size == "480x360" and mode != "start_end":
-        return json.dumps({"error": "480x360 仅支持 start_end 模式"}, ensure_ascii=False)
+    default_sizes = {"image": "1280x720", "start_end": "720x480", "reference": "720x480"}
+    output_size = size or default_sizes[mode]
+    if output_size != default_sizes[mode]:
+        logger.warning("智谱 Vidu 2 视频请求被拒绝: mode=%s size=%s", mode, output_size)
+        return json.dumps({"error": f"{mode} 模式仅支持 size={default_sizes[mode]}"}, ensure_ascii=False)
 
     try:
+        logger.info(
+            "提交智谱 Vidu 2 视频任务: mode=%s image_count=%s size=%s movement=%s with_audio=%s aspect_ratio=%s",
+            mode, len(image_urls), output_size, movement_amplitude, with_audio if mode != "start_end" else "n/a",
+            aspect_ratio if mode == "reference" else "n/a",
+        )
         images = [_zhipu_image(image_url) for image_url in image_urls]
         model = VIDU_MODELS[mode]
         payload = {
@@ -132,10 +154,11 @@ def generate_zhipu_vidu2_video_tool(
             "prompt": prompt,
             "image_url": images[0] if mode == "image" else images,
             "duration": 4,
-            "size": size or "1280x720",
+            "size": output_size,
             "movement_amplitude": movement_amplitude,
-            "with_audio": with_audio,
         }
+        if mode != "start_end":
+            payload["with_audio"] = with_audio
         if mode == "reference":
             payload["aspect_ratio"] = aspect_ratio
 
@@ -147,8 +170,10 @@ def generate_zhipu_vidu2_video_tool(
         task_id = task.get("id")
         if not task_id:
             raise RuntimeError(f"提交响应未包含 id: {json.dumps(task, ensure_ascii=False)}")
+        logger.info("智谱 Vidu 2 视频任务已提交: task_id=%s model=%s", task_id, model)
 
         deadline = time.monotonic() + POLL_TIMEOUT_SECONDS
+        last_status: Optional[str] = None
         while time.monotonic() < deadline:
             query = requests.get(f"{ZHIPU_BASE_URL}/paas/v4/async-result/{task_id}", headers=headers, timeout=60)
             if not query.ok:
@@ -158,12 +183,16 @@ def generate_zhipu_vidu2_video_tool(
                 error = result["error"]
                 raise RuntimeError(error.get("message", str(error)) if isinstance(error, dict) else str(error))
             status = str(result.get("task_status", "")).upper()
+            if status != last_status:
+                logger.info("智谱 Vidu 2 视频任务状态变化: task_id=%s status=%s", task_id, status or "unknown")
+                last_status = status
             if status in {"FAIL", "FAILED", "ERROR"}:
                 raise RuntimeError(f"任务失败: {json.dumps(result, ensure_ascii=False)}")
             video_results = result.get("video_result")
             if isinstance(video_results, list) and video_results and video_results[0].get("url"):
                 video_url = video_results[0]["url"]
                 local_path = _download_video(video_url, prompt)
+                logger.info("智谱 Vidu 2 视频任务完成并保存: task_id=%s local_path=%s", task_id, local_path)
                 return json.dumps({
                     "video_url": local_path,
                     "original_url": video_url,
@@ -174,14 +203,15 @@ def generate_zhipu_vidu2_video_tool(
                     "model": model,
                     "mode": mode,
                     "prompt": prompt,
-                    "price_yuan_per_request": 1.25,
-                    "price_yuan_per_second": 0.3125,
+                    "price_yuan_per_request": 2.5 if mode == "reference" else 1.25,
+                    "price_yuan_per_second": 0.625 if mode == "reference" else 0.3125,
                     "message": "视频已生成并保存到本地",
                 }, ensure_ascii=False)
             time.sleep(POLL_INTERVAL_SECONDS)
+        logger.warning("智谱 Vidu 2 视频任务超时: task_id=%s timeout_seconds=%s", task_id, POLL_TIMEOUT_SECONDS)
         raise TimeoutError(f"任务超时: {POLL_TIMEOUT_SECONDS} 秒内未完成（task_id={task_id}）")
     except Exception as error:
-        logger.exception("智谱 Vidu 2 生成失败")
+        logger.exception("智谱 Vidu 2 视频生成失败: mode=%s", mode)
         return json.dumps({"error": f"生成视频时出错: {error}"}, ensure_ascii=False)
 
 
@@ -194,14 +224,15 @@ def main() -> None:
     parser.add_argument("--movement-amplitude", choices=("auto", "small", "medium", "large"), default="auto", help="运动幅度")
     parser.add_argument("--with-audio", action="store_true", help="生成背景音乐")
     parser.add_argument("--aspect-ratio", choices=("16:9", "9:16", "1:1"), default="16:9", help="仅 reference 模式有效")
-    parser.add_argument("--size", choices=("1280x720", "480x360"), help="仅 start_end 支持 480x360")
+    parser.add_argument("--size", choices=("1280x720", "720x480"), help="image 使用 1280x720；start_end/reference 使用 720x480")
     args = parser.parse_args()
 
     expected_counts = {"image": {1}, "start_end": {2}, "reference": {1, 2, 3}}
     if len(args.image_urls) not in expected_counts[args.mode]:
         parser.error(f"--mode {args.mode} 收到 {len(args.image_urls)} 张图片，数量不符合要求")
-    if args.size == "480x360" and args.mode != "start_end":
-        parser.error("--size 480x360 仅支持 --mode start_end")
+    default_sizes = {"image": "1280x720", "start_end": "720x480", "reference": "720x480"}
+    if args.size and args.size != default_sizes[args.mode]:
+        parser.error(f"--mode {args.mode} 仅支持 --size {default_sizes[args.mode]}")
 
     logging.basicConfig(level=logging.INFO)
     result = generate_zhipu_vidu2_video_tool.invoke({

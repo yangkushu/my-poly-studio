@@ -7,6 +7,8 @@ from typing import Literal, Optional
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
+logger = logging.getLogger(__name__)
+
 try:
     from app.tools.fal_video_generation import FAL_USD_CNY_RATE, create_fal_client, generate_fal_video, resolve_input_url
 except ModuleNotFoundError:  # 支持 cd backend 后直接执行 python app/tools/<tool>.py
@@ -19,17 +21,31 @@ VIDU_ENDPOINTS = {
 
 
 class GenerateFalViduQ3TurboVideoInput(BaseModel):
-    """Vidu Q3 Turbo 的输入参数。"""
+    """Vidu Q3 Turbo 视频生成工具的输入参数。"""
 
-    prompt: str = Field(description="视频内容描述，最多 2000 个字符。")
-    mode: Literal["text", "image"] = Field(default="text", description="text 为文生视频；image 为单图或首尾帧图生视频。")
-    image_url: Optional[str] = Field(default=None, description="image 模式必填；支持公网 URL、data URI 或本地 /storage/... 路径。")
-    end_image_url: Optional[str] = Field(default=None, description="image 模式可选尾帧。")
-    duration: int = Field(default=5, ge=1, le=16, description="视频时长（1–16 秒）。")
-    resolution: Literal["360p", "540p", "720p", "1080p"] = Field(default="720p", description="输出分辨率；有尾帧时不支持 360p。")
-    aspect_ratio: Literal["16:9", "9:16", "4:3", "3:4", "1:1"] = Field(default="16:9", description="输出宽高比。")
-    audio: bool = Field(default=True, description="是否生成原生音频。")
-    seed: Optional[int] = Field(default=None, description="可选随机种子。")
+    prompt: str = Field(description="必填。视频内容描述，最多 2000 个字符；image 模式也用它描述图片应如何运动、镜头如何变化。")
+    mode: Literal["text", "image"] = Field(
+        default="text",
+        description="生成模式：text=仅凭提示词生成，不能传图片；image=使用一张首帧生成，可选尾帧以生成首尾帧过渡视频。",
+    )
+    image_url: Optional[str] = Field(
+        default=None,
+        description="首帧图片。仅 image 模式必填；可为公网 URL、data URI 或本项目的 /storage/... 图片路径。",
+    )
+    end_image_url: Optional[str] = Field(
+        default=None,
+        description="可选尾帧图片，仅 image 模式可用；提供后生成从 image_url 到此图的过渡视频。可为公网 URL、data URI 或本项目的 /storage/... 图片路径。",
+    )
+    duration: int = Field(default=5, ge=1, le=16, description="视频时长（秒），范围 1–16，默认 5。")
+    resolution: Literal["360p", "540p", "720p", "1080p"] = Field(
+        default="720p", description="输出分辨率，默认 720p；提供 end_image_url 时不能选 360p。"
+    )
+    aspect_ratio: Literal["16:9", "9:16", "4:3", "3:4", "1:1"] = Field(
+        default="16:9",
+        description="text 模式的输出画幅比：16:9、9:16、4:3、3:4 或 1:1，默认 16:9。image 端点不支持此参数，本工具会忽略它。",
+    )
+    audio: bool = Field(default=True, description="是否启用音画同步生成；启用后视频可包含对白和音效，默认启用。")
+    seed: Optional[int] = Field(default=None, description="可选随机种子，用于提高重复生成时的可复现性；省略则由服务随机选择。")
 
 
 @tool("generate_fal_vidu_q3_turbo_video", args_schema=GenerateFalViduQ3TurboVideoInput)
@@ -44,31 +60,37 @@ def generate_fal_vidu_q3_turbo_video_tool(
     audio: bool = True,
     seed: Optional[int] = None,
 ) -> str:
-    """通过 fal.ai 调用 Vidu Q3 Turbo 生成视频。
+    """
+    使用 fal.ai 的 Vidu Q3 Turbo 生成视频。
 
-    官方文档：
-    - 文生：https://fal.ai/models/fal-ai/vidu/q3/text-to-video/turbo/api
-    - 图生/首尾帧：https://fal.ai/models/fal-ai/vidu/q3/image-to-video/turbo/api
-    - fal Python SDK：https://fal.ai/docs/api-reference/client-libraries/python/fal_client
-    Q3 Turbo 仅包含文生和图生（可选尾帧）endpoint；参考图能力属于独立的 Q3 Mix，未混入本 Tool。
-    价格（2026-08-05，fal 官方美元报价）：360P/540P 为 $0.035/秒，720P/1080P 为 $0.077/秒。
-    按 1 USD ≈ 6.77 元估算：低分辨率 ≈ 0.24 元/秒，高分辨率 ≈ 0.52 元/秒；
-    汇率会波动，实际换算值由 FAL_USD_CNY_RATE 配置决定，最终以 fal 账单为准。
+    - text：纯文生视频；只提供 prompt，不传 image_url 或 end_image_url。
+    - image：首帧图生视频；必须提供 image_url。可选 end_image_url，用于生成首帧到尾帧的过渡视频。
 
-    返回下载到本地 /storage/videos/ 的 video_url JSON。
+    本工具不支持参考图模式。视频可选 1–16 秒，并可生成包含对白和音效的原生音频。完成后返回包含本地 video_url 的 JSON 结果。
     """
     if not 1 <= duration <= 16:
+        logger.warning("Vidu Q3 视频请求被拒绝: 非法时长 duration=%s", duration)
         return json.dumps({"error": "duration 必须为 1 至 16 秒"}, ensure_ascii=False)
     if mode == "image" and not image_url:
+        logger.warning("Vidu Q3 视频请求被拒绝: image 模式缺少首帧")
         return json.dumps({"error": "image 模式必须提供 image_url"}, ensure_ascii=False)
     if mode == "text" and (image_url or end_image_url):
+        logger.warning("Vidu Q3 视频请求被拒绝: text 模式包含图片参数")
         return json.dumps({"error": "text 模式不接受 image_url 或 end_image_url"}, ensure_ascii=False)
     if end_image_url and resolution == "360p":
+        logger.warning("Vidu Q3 视频请求被拒绝: 尾帧不支持 360p")
         return json.dumps({"error": "提供 end_image_url 时不支持 360p"}, ensure_ascii=False)
 
     try:
+        logger.info(
+            "开始 Vidu Q3 视频生成: mode=%s duration=%ss resolution=%s aspect_ratio=%s audio=%s has_end_frame=%s has_seed=%s",
+            mode, duration, resolution, aspect_ratio if mode == "text" else "n/a", audio, bool(end_image_url), seed is not None,
+        )
         client = create_fal_client()
-        payload = {"prompt": prompt, "duration": duration, "resolution": resolution, "aspect_ratio": aspect_ratio, "audio": audio}
+        payload = {"prompt": prompt, "duration": duration, "resolution": resolution, "audio": audio}
+        # fal 的 Vidu Q3 image-to-video 端点没有 aspect_ratio 参数。
+        if mode == "text":
+            payload["aspect_ratio"] = aspect_ratio
         if seed is not None:
             payload["seed"] = seed
         if mode == "image":
@@ -76,6 +98,7 @@ def generate_fal_vidu_q3_turbo_video_tool(
             if end_image_url:
                 payload["end_image_url"] = resolve_input_url(end_image_url, client)
         result = generate_fal_video(VIDU_ENDPOINTS[mode], payload, prompt, "viduq3")
+        logger.info("Vidu Q3 视频生成完成: task_id=%s local_path=%s", result.get("task_id"), result.get("local_path"))
         price_usd = 0.035 if resolution in {"360p", "540p"} else 0.077
         return json.dumps({
             **result,
@@ -85,7 +108,7 @@ def generate_fal_vidu_q3_turbo_video_tool(
             "usd_cny_rate_used": FAL_USD_CNY_RATE, "message": "视频已生成并保存到本地",
         }, ensure_ascii=False)
     except Exception as error:
-        logging.exception("fal Vidu Q3 Turbo 生成失败")
+        logger.exception("Vidu Q3 视频生成失败: mode=%s", mode)
         return json.dumps({"error": f"生成视频时出错: {error}"}, ensure_ascii=False)
 
 
