@@ -44,7 +44,7 @@ def generate_fal_hailuo_02_standard_video_tool(
     """
     通过 fal.ai 调用 MiniMax Hailuo 02 Standard 模型生成视频。
     - 支持文生、单图图生（传入 image_url)、首尾帧（传入 首帧:image_url,尾帧:end_image_url)
-    - 测试阶段使用最低画质，最短时间，方便测试效果 
+    - 测试阶段使用最低画质(512P)，最短时间(6)，方便测试效果 
     Args:
         prompt: 视频生成的提示词（支持中英文）
         mode: 生成模式，"text"（文生视频）、"image"（图生视频）
