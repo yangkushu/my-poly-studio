@@ -18,7 +18,7 @@ from app.tools.fal_hailuo_02_standard_video_generation import generate_fal_hailu
 from app.tools.fal_kling_o3_standard_video_generation import generate_fal_kling_o3_standard_video_tool
 # from app.tools.model_3d_generation import generate_3d_model_tool
 # from app.tools.volcano_video_generation import generate_volcano_video_tool
-# from app.tools.video_concatenation import concatenate_videos_tool
+from app.tools.video_concatenation import concatenate_videos_tool
 # from app.tools.virtual_anchor_generation import (
 #     detect_face_tool,
 #     generate_virtual_anchor_tool,
@@ -55,10 +55,10 @@ def create_agent():
         generate_volcano_image_tool,
         edit_volcano_image_tool,
         # generate_fal_hailuo_02_standard_video_tool,
-        generate_fal_kling_o3_standard_video_tool
+        generate_fal_kling_o3_standard_video_tool,
         # generate_3d_model_tool,
         # generate_volcano_video_tool,
-        # concatenate_videos_tool,
+        concatenate_videos_tool
         # detect_face_tool,
         # generate_virtual_anchor_tool,
         # # Qwen-TTS工具

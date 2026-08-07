@@ -19,3 +19,4 @@ fal-client
 moviepy>=1.0.3
 opencv-python>=4.8.0
 pydub>=0.25.1
+moviepy>=1.0.3
