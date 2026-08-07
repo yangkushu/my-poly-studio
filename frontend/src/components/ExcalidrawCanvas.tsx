@@ -35,13 +35,17 @@ export type ExcalidrawCanvasHandle = {
   addVideo: (args: { videoUrl: string }) => Promise<void>
 }
 
+export type CanvasInputMedia = {
+  type: 'image' | 'video'
+  url: string
+}
 
 type Props = {
   canvasId: string
   theme?: 'dark' | 'light'
   initialData?: ExcalidrawCanvasData
   onDataChange: (data: ExcalidrawCanvasData) => void
-  onImageToInput?: (url: string) => void
+  onMediaToInput?: (media: CanvasInputMedia[]) => void | Promise<void>
   onThemeChange?: (theme: 'dark' | 'light') => void
   on3DModelClick?: (modelUrl: string, format: 'obj' | 'glb', mtlUrl?: string, textureUrl?: string) => void
   onVideoClick?: (videoUrl: string) => void
@@ -68,6 +72,25 @@ function sanitizeAppState(appState: any) {
 function sanitizeCanvasData(data: ExcalidrawCanvasData): ExcalidrawCanvasData {
   return {
     ...data,
+    // `link` is a URL field. Restore legacy media previews that stored JSON in
+    // it, while retaining their metadata in customData and restoring the real
+    // media URL so Excalidraw keeps showing its link button.
+    elements: (data.elements || []).map((element: any) => {
+      const legacyMetadata = parseMediaMetadata(element?.link)
+      if (!legacyMetadata) return element
+      const mediaUrl = legacyMetadata.type === 'video'
+        ? legacyMetadata.videoUrl
+        : legacyMetadata.modelUrl
+      return {
+        ...element,
+        link: typeof mediaUrl === 'string' ? mediaUrl : null,
+        // Some old entries only retained `link`; keep their recovered metadata
+        // so playback and "发送到输入框" still work after migration.
+        customData: parseMediaMetadata(element?.customData)
+          ? element.customData
+          : JSON.stringify(legacyMetadata),
+      }
+    }),
     appState: sanitizeAppState(data.appState),
   }
 }
@@ -86,6 +109,43 @@ function guessMimeType(url: string) {
   if (u.endsWith('.webp')) return 'image/webp'
   if (u.endsWith('.gif')) return 'image/gif'
   return 'image/png'
+}
+
+function parseMediaMetadata(value: any) {
+  if (!value) return null
+  if (typeof value === 'object') {
+    return value.type === 'video' || value.type === '3d_model' ? value : null
+  }
+  if (typeof value !== 'string') return null
+
+  // Older canvas entries stored JSON in Excalidraw's URL-only `link` field.
+  // Excalidraw normalizes that JSON into an encoded localhost URL, so inspect
+  // both the raw value and the decoded URL path for migration purposes.
+  const candidates = [value]
+  try {
+    candidates.push(new URL(value, window.location.origin).pathname)
+  } catch {
+    // Keep parsing the raw value.
+  }
+  for (const candidate of candidates) {
+    try {
+      const decoded = decodeURIComponent(candidate)
+        .replace(/^\//, '')
+        .replace(/&quot;/g, '"')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+      const metadata = JSON.parse(decoded)
+      if (metadata?.type === 'video' || metadata?.type === '3d_model') return metadata
+    } catch {
+      // Ordinary links are not JSON metadata.
+    }
+  }
+  return null
+}
+
+function parseElementLinkData(element: any) {
+  return parseMediaMetadata(element?.customData) ?? parseMediaMetadata(element?.link)
 }
 
 function isMediaElement(el: any) {
@@ -150,7 +210,7 @@ function computeNextPosition(elements: any[], maxNumPerRow = 4, spacing = 20) {
 }
 
 export const ExcalidrawCanvas = forwardRef<ExcalidrawCanvasHandle, Props>(
-  ({ canvasId, theme, initialData, onDataChange, onImageToInput, onThemeChange, on3DModelClick, onVideoClick, onModalClose: _onModalClose, onReady }, ref) => {
+  ({ canvasId, theme, initialData, onDataChange, onMediaToInput, onThemeChange, on3DModelClick, onVideoClick, onModalClose: _onModalClose, onReady }, ref) => {
     const [api, setApi] = useState<any>(null)
     const saveTimer = useRef<number | null>(null)
     const imageToInputCallbackRef = useRef<((url: string) => void) | null>(null)
@@ -556,30 +616,7 @@ export const ExcalidrawCanvas = forwardRef<ExcalidrawCanvasHandle, Props>(
         // 尝试从多个字段解析3D模型或视频信息
         if (selectedElement) {
           // 方式1: 从link字段解析（字符串格式）
-          if (selectedElement.link && typeof selectedElement.link === 'string') {
-            try {
-              linkData = JSON.parse(selectedElement.link)
-            } catch (e) {
-              // 忽略
-            }
-          }
-
-          // 方式2: 从customData字段解析（备用）
-          if (!linkData && (selectedElement as any).customData) {
-            try {
-              const customData = (selectedElement as any).customData
-              linkData = typeof customData === 'string'
-                ? JSON.parse(customData)
-                : customData
-            } catch (e) {
-              // 忽略
-            }
-          }
-
-          // 方式3: 如果link是对象，直接使用
-          if (!linkData && selectedElement.link && typeof selectedElement.link === 'object') {
-            linkData = selectedElement.link
-          }
+          linkData = parseElementLinkData(selectedElement)
 
           // 检查是否是3D模型
           if (linkData && linkData.type === '3d_model' && linkData.modelUrl && linkData.format) {
@@ -618,8 +655,8 @@ export const ExcalidrawCanvas = forwardRef<ExcalidrawCanvasHandle, Props>(
           }
         }
 
-        // 创建"发送到输入框"菜单项（仅当onImageToInput存在时显示）
-        if (onImageToInput) {
+        // 创建"发送到输入框"菜单项（支持图片和视频预览图）
+        if (onMediaToInput) {
           const menuItem = document.createElement('div')
           menuItem.className = 'context-menu-item polystudio-context-menu-item'
           menuItem.setAttribute('data-action', 'send-to-input')
@@ -629,7 +666,7 @@ export const ExcalidrawCanvas = forwardRef<ExcalidrawCanvasHandle, Props>(
           e.preventDefault()
           e.stopPropagation()
 
-          // 点击时检查是否有选中的图片
+          // 点击时检查是否有选中的图片或视频预览图
           const currentElements = api.getSceneElements() || []
           const currentAppState = api.getAppState()
           const currentSelectedIds = currentAppState?.selectedElementIds || {}
@@ -640,36 +677,38 @@ export const ExcalidrawCanvas = forwardRef<ExcalidrawCanvasHandle, Props>(
           })
 
           if (currentSelectedImages.length === 0) {
-            // 没有选中图片，提示用户
-            alert('请先选中图片')
+            alert('请先选中图片或视频')
             return
           }
 
           const files = api.getFiles?.() || {}
+          const media: CanvasInputMedia[] = []
           const imageUrls = currentSelectedImages
             .map((el: any) => {
+              const selectedLinkData = parseElementLinkData(el)
+              if (selectedLinkData?.type === 'video' && typeof selectedLinkData.videoUrl === 'string') {
+                media.push({ type: 'video', url: selectedLinkData.videoUrl })
+                return null
+              }
               const file = files[el.fileId]
               return file?.dataURL
             })
             .filter(Boolean) as string[]
 
-          if (imageUrls.length === 0) {
-            alert('无法获取图片数据')
-            return
-          }
-
           try {
             if (imageUrls.length === 1) {
-              // 单张图片，直接发送
-              onImageToInput(imageUrls[0])
-            } else {
-              // 多张图片，拼接后发送
-              const combinedImage = await combineImages(imageUrls)
-              onImageToInput(combinedImage)
+              media.push({ type: 'image', url: imageUrls[0] })
+            } else if (imageUrls.length > 1) {
+              media.push({ type: 'image', url: await combineImages(imageUrls) })
             }
+            if (media.length === 0) {
+              alert('无法获取所选媒体')
+              return
+            }
+            await onMediaToInput(media)
           } catch (error) {
-            console.error('处理图片失败:', error)
-            alert('处理图片失败，请重试')
+            console.error('处理媒体失败:', error)
+            alert('处理媒体失败，请重试')
           }
 
           // 关闭菜单
@@ -766,7 +805,7 @@ export const ExcalidrawCanvas = forwardRef<ExcalidrawCanvasHandle, Props>(
           clearTimeout(processTimer)
         }
       }
-    }, [api, onImageToInput, on3DModelClick, onVideoClick, combineImages])
+    }, [api, onMediaToInput, on3DModelClick, onVideoClick, combineImages])
 
     useImperativeHandle(
       ref,
@@ -967,7 +1006,7 @@ export const ExcalidrawCanvas = forwardRef<ExcalidrawCanvasHandle, Props>(
             locked: false,
           }
 
-          // 创建图片元素，并在link字段和customData中存储3D模型信息（双重保险）
+          // customData 保存 3D 模型元数据；link 仅保存可点击的真实模型地址。
           const modelInfo = JSON.stringify({ modelUrl, format, type: '3d_model', mtlUrl, textureUrl })
           const newElement: any = {
             type: 'image',
@@ -995,8 +1034,8 @@ export const ExcalidrawCanvas = forwardRef<ExcalidrawCanvasHandle, Props>(
             isDeleted: false,
             index: null,
             updated: created,
-            link: modelInfo, // 存储3D模型信息（主要方式）
-            customData: modelInfo, // 备用方式，防止link字段被Excalidraw处理
+            link: modelUrl,
+            customData: modelInfo,
             locked: false,
             status: 'saved',
             scale: [1, 1],
@@ -1178,7 +1217,7 @@ export const ExcalidrawCanvas = forwardRef<ExcalidrawCanvasHandle, Props>(
             locked: false,
           }
 
-          // 创建图片元素，并在link字段中存储视频信息
+          // customData 保存视频元数据；link 仅保存可点击的真实视频地址。
           const videoInfo = JSON.stringify({ videoUrl, type: 'video' })
           const newElement: any = {
             type: 'image',
@@ -1206,8 +1245,8 @@ export const ExcalidrawCanvas = forwardRef<ExcalidrawCanvasHandle, Props>(
             isDeleted: false,
             index: null,
             updated: created,
-            link: videoInfo, // 存储视频信息
-            customData: videoInfo, // 备用方式
+            link: videoUrl,
+            customData: videoInfo,
             locked: false,
             status: 'saved',
             scale: [1, 1],

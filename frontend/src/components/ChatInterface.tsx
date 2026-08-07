@@ -681,6 +681,12 @@ const ChatInterface = ({ initialCanvasId, theme, onToggleTheme, onSetTheme }: Ch
           if (audioUrls.length) {
             content += `\n\nGenerated Audio:\n${audioUrls.map((u) => `- ${u}`).join('\n')}`
           }
+          const videoUrls = msg.toolCalls
+            .map((tc) => tc.videoUrl)
+            .filter(Boolean) as string[]
+          if (videoUrls.length) {
+            content += `\n\nGenerated Video:\n${videoUrls.map((u) => `- ${u}`).join('\n')}`
+          }
         }
         return { role: msg.role, content }
       })
@@ -1497,9 +1503,16 @@ const ChatInterface = ({ initialCanvasId, theme, onToggleTheme, onSetTheme }: Ch
                     onSetTheme(nextTheme)
                   }
                 }}
-                onImageToInput={async (url) => {
-                  // 将图片添加到输入框
-                  try {
+                onMediaToInput={async (media) => {
+                  const videoUrls = media
+                    .filter((item) => item.type === 'video')
+                    .map((item) => item.url)
+                  if (videoUrls.length > 0) {
+                    setUploadedVideos((prev) => [...prev, ...videoUrls])
+                  }
+
+                  for (const { url } of media.filter((item) => item.type === 'image')) {
+                    try {
                     // 如果是 data URL，需要先上传到服务器
                     if (url.startsWith('data:')) {
                       // 将 data URL 转换为 Blob 并上传
@@ -1557,7 +1570,8 @@ const ChatInterface = ({ initialCanvasId, theme, onToggleTheme, onSetTheme }: Ch
                     console.error('处理图片失败:', err)
                     alert('添加图片到输入框失败，请重试')
                   }
-                    }}
+                  }
+                }}
                     on3DModelClick={(modelUrl, format, mtlUrl, textureUrl) => {
                       // 点击3D模型预览图时，打开弹框
                       // 如果弹框已经打开，不重复打开

@@ -16,6 +16,7 @@ from app.tools.volcano_image_generation import (
 )
 from app.tools.fal_hailuo_02_standard_video_generation import generate_fal_hailuo_02_standard_video_tool
 from app.tools.fal_kling_o3_standard_video_generation import generate_fal_kling_o3_standard_video_tool
+from app.tools.minimax_h3_video_generation import generate_minimax_h3_video_tool
 # from app.tools.model_3d_generation import generate_3d_model_tool
 # from app.tools.volcano_video_generation import generate_volcano_video_tool
 from app.tools.video_concatenation import concatenate_videos_tool
@@ -55,7 +56,8 @@ def create_agent():
         generate_volcano_image_tool,
         edit_volcano_image_tool,
         # generate_fal_hailuo_02_standard_video_tool,
-        generate_fal_kling_o3_standard_video_tool,
+        # generate_fal_kling_o3_standard_video_tool,
+        generate_minimax_h3_video_tool,
         # generate_3d_model_tool,
         # generate_volcano_video_tool,
         concatenate_videos_tool
