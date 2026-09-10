@@ -25,11 +25,11 @@ from app.tools.video_concatenation import concatenate_videos_tool
 #     generate_virtual_anchor_tool,
 # )
 from app.tools.qwen_tts import qwen_voice_design_tool, qwen_voice_cloning_tool
-# from app.tools.audio_mixing import (
-#     concatenate_audio_tool,
-#     select_bgm_tool,
-#     mix_audio_with_bgm_tool,
-# )
+from app.tools.audio_mixing import (
+    concatenate_audio_tool,
+    select_bgm_tool,
+    mix_audio_with_bgm_tool,
+)
 from app.tools.qwen_omni_understanding import qwen_omni_understand_tool
 # from app.tools.skill_tools import (
 #     read_skill_file_tool,
@@ -67,9 +67,9 @@ def create_agent():
         qwen_voice_design_tool,
         qwen_voice_cloning_tool,
         # # 音频混音工具
-        # concatenate_audio_tool,
-        # select_bgm_tool,
-        # mix_audio_with_bgm_tool,
+        concatenate_audio_tool,
+        select_bgm_tool,
+        mix_audio_with_bgm_tool,
         # # Qwen3-Omni 多模态理解工具
         qwen_omni_understand_tool,
         # # Skill 文件读取工具（Progressive Loading）
