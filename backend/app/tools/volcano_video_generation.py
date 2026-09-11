@@ -28,7 +28,7 @@ if ENV_PATH.exists():
 VOLCANO_API_KEY = os.getenv("VOLCANO_API_KEY", "").strip()
 VOLCANO_BASE_URL = os.getenv("VOLCANO_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3").strip()
 # 默认使用 Seedance 1.5 Pro（支持文生视频、图生视频-首帧、首尾帧）
-VOLCANO_VIDEO_MODEL = os.getenv("VOLCANO_VIDEO_MODEL", "doubao-seedance-1-5-pro").strip()
+VOLCANO_VIDEO_MODEL = os.getenv("VOLCANO_VIDEO_MODEL", "").strip()
 
 # 视频存储目录
 STORAGE_DIR = BASE_DIR / "storage"
